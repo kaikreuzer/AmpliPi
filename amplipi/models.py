@@ -338,12 +338,13 @@ class Stream(Base):
   * dlna
   * internetradio
   * spotify
+  * file
   """)
   # TODO: how to support different stream types
   user: Optional[str] = Field(description='User login')
   password: Optional[str] = Field(description='Password')
   station: Optional[str] = Field(description='Radio station identifier')
-  url: Optional[str] = Field(description='Stream url, used for internetradio')
+  url: Optional[str] = Field(description='Stream url, used for internetradio and file')
   logo: Optional[str] = Field(description='Icon/Logo url, used for internetradio')
   # generated fields
   # TODO: formalize stream info
@@ -414,6 +415,12 @@ class Stream(Base):
             'type': 'shairport'
           }
         },
+        "Play single file or announcement" : {
+          'value': {
+            'name': 'Play NASA Announcement',
+            'url': 'https://www.nasa.gov/mp3/640149main_Computers%20are%20in%20Control.mp3'
+          }
+        }
       },
       'examples': {
         'Regina Spektor Radio (playing)': {
@@ -595,6 +602,21 @@ class PresetUpdate(BaseUpdate):
                 {'id': 5, 'mute': True}
               ]
             }
+          }
+        }
+      }
+    }
+
+class Announcement(BaseModel):
+  """ A PA-like Announcement """
+  media : str = Field(description="URL to media to play as the announcement")
+
+  class Config:
+    schema_extra = {
+      'examples': {
+        'Make NASA Announcement': {
+          'value': {
+            'media': 'https://www.nasa.gov/mp3/640149main_Computers%20are%20in%20Control.mp3',
           }
         }
       }
