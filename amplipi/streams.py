@@ -733,6 +733,6 @@ def build_stream(stream: models.Stream, mock=False) -> AnyStream:
     return DLNA(args['name'], mock=mock)
   elif stream.type == 'internetradio':
     return InternetRadio(args['name'], args['url'], args['logo'], mock=mock)
-  elif stream.type == 'file':
+  elif stream.type == 'fileplayer':
     return FilePlayer(args['name'], args['url'], mock=mock)
   raise NotImplementedError(stream.type)
