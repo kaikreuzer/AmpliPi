@@ -23,7 +23,6 @@ The FastAPI/Starlette web framework is used to simplify the web plumbing.
 """
 
 import argparse
-from PIL import Image # For custom album art size
 import urllib.request # For custom album art size
 
 DEBUG_API = False
@@ -35,11 +34,15 @@ import os
 from typing import List, Dict, Set, Any, Optional, Callable, Union, TYPE_CHECKING, get_type_hints
 from types import SimpleNamespace
 
+import urllib.request
 from queue import Queue
 from functools import lru_cache
 import asyncio
 import json
 import yaml
+
+
+from PIL import Image # For custom album art size
 
 # web framework
 from fastapi import FastAPI, Request, Response, HTTPException, Depends, Path
@@ -310,52 +313,51 @@ def exec_command(ctrl: Api = Depends(get_ctrl), sid: int = params.StreamID, cmd:
   Currently only available with Pandora streams"""
   return code_response(ctrl, ctrl.exec_stream_command(sid, cmd=cmd))
 
-@app.get('/api/streams/image/{sid}/{imgsize}')
-def get_stream_image(ctrl: Api = Depends(get_ctrl), sid: int = params.StreamID, imgsize: str = params.ImageSize):
-  _, stream = utils.find(ctrl.get_state().streams, sid)
-  if imgsize is None:
-    width = 120
-    height = 120
-  else:
-    width = imgsize
-    height = imgsize
+# TODO: determine the api request type expected here
+"""
+The external keypad needs a way to fetch a jpg representation a source's input at a specific size
+There are a couple of possibilities for the interface:
+1. stream_id + json image specs, this requires a way of supporting the 2 other no-stream cases (disconnected, rca_inputs)
+2. source_id + json image specs, this doesnt need nearly as much knowledge of the system but you need to introspect the stream to detect changes
+3. json encoded image_url and image specs, this requires introspection to detect changes.
+However we could fix the info interface to always return a URI which would simplify the introspection required.
 
-  if stream is not None:
-    image_path = None
-    # TODO: stream image discovery should not be this hard, either simplify it or add a helper
-    if stream.logo is not None:
-      image_path = stream.logo
-    elif 'image_url' in  stream.info: # TODO: this is wrong
-      image_path = stream.info['image_url']
+I am leaning to option 3,
+After checking the external keypad code this would be a pretty easy change to `void getStream(String sourceID)`,
+additionally we would need to add a json payload to `downloadAlbumart(String streamID)`
+using some C code like the following:
 
-    img_tmp = f'/tmp/{os.path.basename(image_path)}'
-    img_tmp_jpg = img_tmp + '-' + str(imgsize) + '.jpg'
-    if not os.path.exists(img_tmp_jpg):
-      urllib.request.urlretrieve(stream['logo'], img_tmp)
-      size = width, height
-      img = Image.open(img_tmp)
-      img.thumbnail(size)
-      img = img.convert(mode="RGB")
-      img.save(img_tmp_jpg)
-      os.remove(img_tmp)
+```
+http.addHeader("Content-Type", "application/json");
+int httpCode = http.GET(payload);
+```
+"""
+@app.get('/api/sources/{sid}/image')
+async def get_source_image(img_spec: models.ImageSpec, ctrl: Api = Depends(get_ctrl), sid: int = params.SourceID):
+  "Get the image for a source"
+  uri, resp = ctrl.get_source_image(sid)
 
-    try:
-      return send_file(img_tmp_jpg, mimetype='image/jpg', as_attachment=False)
-    except FileNotFoundError:
-      abort(404)
+  if resp.code != ApiCode.OK:
+    return code_response(ctrl, resp)
 
-  else:
-    local_img = '/home/pi/web/static/imgs/rca_inputs.jpg'
-    img_tmp_jpg = local_img + '-' + str(imgsize) + '.jpg'
-    try:
-      size = width, height
-      img = Image.open(local_img)
-      img.thumbnail(size)
-      img = img.convert(mode="RGB")
-      img.save(img_tmp_jpg)
-      return send_file(img_tmp_jpg, mimetype='image/jpg', as_attachment=False)
-    except FileNotFoundError:
-      abort(404)
+  if uri is None:
+    uri =  '/home/pi/web/static/imgs/disconnected.jpg'
+  elif uri == 'rca':
+    uri = '/home/pi/web/static/imgs/rca_inputs.jpg'
+
+  img_tmp = f'/tmp/{os.path.basename(uri)}'
+  img_tmp_jpg = f'{img_tmp}-{img_spec.height}x{img_spec.height}.jpg'
+  if not os.path.exists(img_tmp_jpg):
+    if not os.path.exists(uri):
+      img_tmp, _ = urllib.request.urlretrieve(uri, img_tmp)
+    size = img_spec.width, img_spec.height
+    img = Image.open(img_tmp)
+    img.thumbnail(size)
+    img = img.convert(mode="RGB")
+    img.save(img_tmp_jpg)
+    os.remove(img_tmp)
+
+  return FileResponse(img_tmp_jpg, media_type='image/jpg')
 
 # presets
 
