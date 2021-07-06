@@ -23,7 +23,6 @@ The FastAPI/Starlette web framework is used to simplify the web plumbing.
 """
 
 import argparse
-import urllib.request # For custom album art size
 
 DEBUG_API = False
 
@@ -34,13 +33,12 @@ import os
 from typing import List, Dict, Set, Any, Optional, Callable, Union, TYPE_CHECKING, get_type_hints
 from types import SimpleNamespace
 
-import urllib.request
+import urllib.request # For custom album art size
 from queue import Queue
 from functools import lru_cache
 import asyncio
 import json
 import yaml
-
 
 from PIL import Image # For custom album art size
 
@@ -108,17 +106,6 @@ def ungrouped_zones(ctrl: Api, src: int) -> List[models.Zone]:
   # return all of the zones connected to this source that aren't in a group
   ungrouped_zones_ = source_zones.difference(grouped_zones)
   return [zones[z] for z in ungrouped_zones_ if z is not None and not zones[z].disabled]
-
-def song_info(ctrl: Api, sid: int) -> Dict[str, str]:
-  """ Get the song info for a source """
-  song_fields = ['artist', 'album', 'track', 'img_url']
-  stream = ctrl.get_stream(sid=sid)
-  info = stream.info() if stream else {}
-  # add empty strings for unpopulated fields
-  for field in song_fields:
-    if field not in info:
-      info[field] = ''
-  return info
 
 # add a default controller (this is overriden below in create_app)
 @lru_cache(1) # Api controller should only be instantiated once (we clear the cache with get_ctr.cache_clear() after settings object is configured)
@@ -317,13 +304,16 @@ def exec_command(ctrl: Api = Depends(get_ctrl), sid: int = params.StreamID, cmd:
 """
 The external keypad needs a way to fetch a jpg representation a source's input at a specific size
 There are a couple of possibilities for the interface:
-1. stream_id + json image specs, this requires a way of supporting the 2 other no-stream cases (disconnected, rca_inputs)
-2. source_id + json image specs, this doesnt need nearly as much knowledge of the system but you need to introspect the stream to detect changes
-3. json encoded image_url and image specs, this requires introspection to detect changes.
-However we could fix the info interface to always return a URI which would simplify the introspection required.
+1. '/api/{stream_id}/{height}', this requires a way of supporting the 2 other no-stream cases (disconnected, rca_inputs)
+2. '/api/{source_id}/{height}', this doesn't need nearly as much knowledge of the system but you need to introspect the stream to detect changes
+3.'/api/image' with json encoded image_url and height parameters in the request, this requires introspection of the reported url to detect changes.
 
-I am leaning to option 3,
-After checking the external keypad code this would be a pretty easy change to `void getStream(String sourceID)`,
+I have started to implement option 3 since it simplifies the following expected workflow:
+- new song / change in input or metadata on source X
+- amplipi sends update with new art uri
+- touchpanel receives update, downloads jpeg using api
+
+After checking the external keypad code this seems to be a pretty easy change to `void getStream(String sourceID)`,
 additionally we would need to add a json payload to `downloadAlbumart(String streamID)`
 using some C code like the following:
 
@@ -332,25 +322,24 @@ http.addHeader("Content-Type", "application/json");
 int httpCode = http.GET(payload);
 ```
 """
-@app.get('/api/sources/{sid}/image')
-async def get_source_image(img_spec: models.ImageSpec, ctrl: Api = Depends(get_ctrl), sid: int = params.SourceID):
-  "Get the image for a source"
-  uri, resp = ctrl.get_source_image(sid)
+@app.get('/api/image')
+async def get_image(img_spec: models.ImageSpec):
+  """Get a square jpeg image from the specs in img_spec"""
+  uri: str = img_spec.uri
+  if uri.startswith('file://'):
+    uri.replace('file://', STATIC_DIR)
 
-  if resp.code != ApiCode.OK:
-    return code_response(ctrl, resp)
-
-  if uri is None:
-    uri =  '/home/pi/web/static/imgs/disconnected.jpg'
-  elif uri == 'rca':
-    uri = '/home/pi/web/static/imgs/rca_inputs.jpg'
+  # Don't allow parent directory access
+  uri = uri.replace('../','')
+  # TODO: uri downloading needs a more sophisticated protection, it should only download uri's from current stream info
 
   img_tmp = f'/tmp/{os.path.basename(uri)}'
   img_tmp_jpg = f'{img_tmp}-{img_spec.height}x{img_spec.height}.jpg'
+  #
   if not os.path.exists(img_tmp_jpg):
     if not os.path.exists(uri):
       img_tmp, _ = urllib.request.urlretrieve(uri, img_tmp)
-    size = img_spec.width, img_spec.height
+    size = img_spec.height, img_spec.height
     img = Image.open(img_tmp)
     img.thumbnail(size)
     img = img.convert(mode="RGB")
@@ -671,7 +660,7 @@ def view(request: Request, ctrl: Api = Depends(get_ctrl), src: int = 0):
     'unused_groups': [unused_groups(ctrl, src) for src in range(4)],
     'unused_zones': [unused_zones(ctrl, src) for src in range(4)],
     'ungrouped_zones': [ungrouped_zones(ctrl, src) for src in range(4)],
-    'song_info': [song_info(ctrl, src) for src in range(4)],
+    'song_info': [src.info for src in state.sources if src.info is not None], # src.info should never be None
     'version': state.info.version if state.info else 'unknown',
   }
   return templates.TemplateResponse('index.html.j2', context, media_type='text/html')
