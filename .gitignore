@@ -151,3 +151,7 @@ streams/shairport-sync-metadata-reader
 # Amplipi Web
 web/generated/*
 web/static/amplipi_api.yaml
+
+# Firmware builds
+fw/preamp/Debug
+fw/preamp/Release
