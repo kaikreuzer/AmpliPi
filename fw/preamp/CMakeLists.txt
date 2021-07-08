@@ -50,24 +50,18 @@ target_compile_definitions(${PROJECT_NAME}.elf PRIVATE
 
 # -fno-exceptions reduces C++ code size but exceptions must not be thrown
 set(ARM_FLAGS
-  -mcpu=cortex-m0 -mthumb -mfloat-abi=soft #-mfpu=fpv5-d16
-  -fmessage-length=0
-  -fsigned-char -ffunction-sections -fdata-sections -Wall -Wextra
-  -fno-move-loop-invariants -fno-exceptions
+  -mcpu=cortex-m0 -mthumb -mfloat-abi=soft
 )
-set(DEBUG_FLAGS -Og -g)
-set(RELEASE_FLAGS -O3 -s -DNDEBUG)
-set(RELWITHDEBINFO_FLAGS -O3 -g)
-set(MINSIZEREL_FLAGS -Os -s -DNDEBUG)
 
-target_compile_options(${PROJECT_NAME}.elf PRIVATE ${ARM_FLAGS} )#-Wno-expansion-to-defined)
-target_compile_options(${PROJECT_NAME}.elf PRIVATE "$<$<CONFIG:Debug>:${DEBUG_FLAGS}>")
-target_compile_options(${PROJECT_NAME}.elf PRIVATE "$<$<CONFIG:Release>:${RELEASE_FLAGS}>")
-target_compile_options(${PROJECT_NAME}.elf PRIVATE "$<$<CONFIG:RelWithDebInfo>:${RELWITHDEBINFO_FLAGS}>")
-target_compile_options(${PROJECT_NAME}.elf PRIVATE "$<$<CONFIG:MinSizeRel>:${MINSIZEREL_FLAGS}>")
-target_link_libraries(${PROJECT_NAME}.elf PRIVATE
-  -T${CMAKE_CURRENT_LIST_DIR}/LinkerScript.ld -Xlinker --gc-sections
-  -Wl,-Map,"${PROJECT_NAME}.map" -lm ${ARM_FLAGS}
+target_compile_options(${PROJECT_NAME}.elf PRIVATE
+  ${ARM_FLAGS}
+  -std=c11
+  -fmessage-length=0
+  -ffunction-sections
+  #-fdata-sections
+  #-fno-exceptions
+  -Wall
+  -Wextra
 )
 
 # WERROR set in continuous integration
@@ -75,12 +69,31 @@ if(WERROR)
   target_compile_options(${PROJECT_NAME}.elf PRIVATE -Werror )
 endif()
 
-# Print firmware size
-add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
-  COMMAND ${CMAKE_SIZE_UTIL} --format=berkeley "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.elf"
+set(DEBUG_FLAGS -Og -g)
+set(RELEASE_FLAGS -O3)
+set(RELWITHDEBINFO_FLAGS -O3 -g)
+set(MINSIZEREL_FLAGS -Os)
+target_compile_options(${PROJECT_NAME}.elf PRIVATE "$<$<CONFIG:Debug>:${DEBUG_FLAGS}>")
+target_compile_options(${PROJECT_NAME}.elf PRIVATE "$<$<CONFIG:Release>:${RELEASE_FLAGS}>")
+target_compile_options(${PROJECT_NAME}.elf PRIVATE "$<$<CONFIG:RelWithDebInfo>:${RELWITHDEBINFO_FLAGS}>")
+target_compile_options(${PROJECT_NAME}.elf PRIVATE "$<$<CONFIG:MinSizeRel>:${MINSIZEREL_FLAGS}>")
+
+#target_link_libraries(${PROJECT_NAME}.elf PRIVATE
+#  m
+#)
+target_link_options(${PROJECT_NAME}.elf PRIVATE
+  ${ARM_FLAGS}
+  -T${CMAKE_CURRENT_LIST_DIR}/LinkerScript.ld
+  -Wl,--gc-sections
+  -Wl,-Map,${PROJECT_NAME}.map
 )
 
-# Generate hex file and disassembly
+# Print firmware size
+add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
+  COMMAND ${CMAKE_SIZE_UTIL} -B "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.elf"
+)
+
+# Generate bin file and disassembly
 set_property(DIRECTORY APPEND PROPERTY ADDITIONAL_MAKE_CLEAN_FILES
   ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.bin
   ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.disasm
@@ -93,4 +106,16 @@ add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
 add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
   COMMAND ${CMAKE_OBJDUMP} -CSd "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.elf" >
           "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.disasm"
+)
+
+add_custom_target(program
+  COMMAND sudo stm32flash -vRb 115200 -i 5,-4,4 -w ${PROJECT_NAME}.bin /dev/serial0
+  COMMENT "Programming preamp"
+  DEPENDS ${PROJECT_NAME}.elf
+)
+
+add_custom_target(program-expander
+  COMMAND sudo stm32flash -vRb 115200 -w ${PROJECT_NAME}.bin /dev/serial0
+  COMMENT "Programming expander preamp"
+  DEPENDS ${PROJECT_NAME}.elf
 )
